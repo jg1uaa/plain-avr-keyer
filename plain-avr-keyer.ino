@@ -17,7 +17,7 @@
 #define DOT 0x01
 #define DASH 0x02
 
-#define DOT_TICK 300 // in 250us unit
+#define DOT_TICK 7500 // in 10us unit
 #define DASH_TICK (DOT_TICK * 3)
 
 volatile unsigned char PinMemory = 0;
@@ -107,14 +107,14 @@ static void timer_init(void)
 	TCCR1A = 0;
 	TCCR1C = 0;
 
-	OCR1A = 500 - 1;	// 250us
+	OCR1A = 160 - 1;	// 10us
 }
 
 static void timer_start(void)
 {
 	TCNT1 = 0;
 	TIFR1 = ~0;
-	TCCR1B = 0x0a;		// CTC, F_CLK / 8 (1tick = 0.5us @ 16MHz)
+	TCCR1B = 0x09;		// CTC, F_CLK / 1 (1tick = 0.0625us @ 16MHz)
 	TIMSK1 = 0x02;		// Output compare A interrupt enable
 }
 
