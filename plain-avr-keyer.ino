@@ -20,15 +20,28 @@
 #define DOT_TICK 300 // in 250us unit
 #define DASH_TICK (DOT_TICK * 3)
 
+volatile unsigned char PinMemory = 0;
 volatile unsigned char PinStatus = 0;
 volatile unsigned short TimerTick = 0;
+
+static void timer_start(void);
+static void timer_stop(void);
 
 static void update_pin_status(void)
 {
 	unsigned char d = IN_PIN;
 
-	if (!(d & (1 << IN_0))) PinStatus |= DOT;
-	if (!(d & (1 << IN_1))) PinStatus |= DASH;
+	PinStatus = 0;
+
+	if (!(d & (1 << IN_0))) {
+		PinMemory |= DOT;
+		PinStatus |= DOT;
+	}
+
+	if (!(d & (1 << IN_1))) {
+		PinMemory |= DASH;
+		PinStatus |= DASH;
+	}
 }
 
 ISR(IN_vect)
@@ -42,22 +55,22 @@ ISR(TIMER1_COMPA_vect)
 	TimerTick++;
 }
 
-static void clear_pin_status(unsigned char d)
+static void clear_pin_memory(unsigned char d)
 {
 	cli();
-	PinStatus &= ~d;
+	if (!(PinStatus & d)) PinMemory &= ~d;
 	sei();
 }
 
 static void wait_for_tick(unsigned short tick)
 {
-	cli();
-	TimerTick = 0;
-	sei();
+	TimerTick = 0; // timer is stopped here
+	timer_start();
 
 	while (TimerTick < tick)
 		asm __volatile__("sleep");	
 
+	timer_stop();
 }
 
 static void input_init(void)
@@ -87,17 +100,28 @@ static void output_init(void)
 static void timer_init(void)
 {
 	TIMSK0 = 0;		// disble Arduino system timer (required)
+	TCCR0B = 0;
 
-	TCCR1A = 0;
-	TCCR1B = 0;
-	TCCR1C = 0;
 	TIMSK1 = 0;
-	TIFR1 = ~0;
-	TCNT1 = 0;
+	TCCR1B = 0;
+	TCCR1A = 0;
+	TCCR1C = 0;
 
 	OCR1A = 500 - 1;	// 250us
+}
+
+static void timer_start(void)
+{
+	TCNT1 = 0;
+	TIFR1 = ~0;
 	TCCR1B = 0x0a;		// CTC, F_CLK / 8 (1tick = 0.5us @ 16MHz)
 	TIMSK1 = 0x02;		// Output compare A interrupt enable
+}
+
+static void timer_stop(void)
+{
+	TIMSK1 = 0;
+	TCCR1B = 0;
 }
 
 static void start_output(void)
@@ -116,7 +140,7 @@ static void do_output(unsigned short tick, unsigned char status)
 	wait_for_tick(tick);
 	stop_output();
 	wait_for_tick(DOT_TICK);
-	clear_pin_status(status);
+	clear_pin_memory(status);
 }
 
 void setup(void)
@@ -131,8 +155,8 @@ void loop(void)
 	while (!PinStatus)
 	      asm __volatile__("sleep");
 
-	while (PinStatus) {
-		if (PinStatus & DOT) do_output(DOT_TICK, DOT);
-		if (PinStatus & DASH) do_output(DASH_TICK, DASH);
+	while (PinMemory) {
+		if (PinMemory & DOT) do_output(DOT_TICK, DOT);
+		if (PinMemory & DASH) do_output(DASH_TICK, DASH);
 	}
 }
