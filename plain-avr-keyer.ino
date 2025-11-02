@@ -20,12 +20,12 @@
 #define DOT_TICK 300 // in 250us unit
 #define DASH_TICK (DOT_TICK * 3)
 
-volatile byte PinStatus = 0;
+volatile unsigned char PinStatus = 0;
 volatile unsigned short TimerTick = 0;
 
 static void update_pin_status(void)
 {
-	byte d = IN_PIN;
+	unsigned char d = IN_PIN;
 
 	if (!(d & (1 << IN_0))) PinStatus |= DOT;
 	if (!(d & (1 << IN_1))) PinStatus |= DASH;
@@ -42,7 +42,7 @@ ISR(TIMER1_COMPA_vect)
 	TimerTick++;
 }
 
-static void clear_pin_status(byte d)
+static void clear_pin_status(unsigned char d)
 {
 	cli();
 	PinStatus &= ~d;
@@ -110,7 +110,7 @@ static void stop_output(void)
 	OUT_PORT = 0;
 }
 
-static void do_output(unsigned short tick, byte status)
+static void do_output(unsigned short tick, unsigned char status)
 {
 	start_output();
 	wait_for_tick(tick);
