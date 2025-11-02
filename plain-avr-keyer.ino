@@ -51,13 +51,13 @@ ISR(IN_vect)
 
 ISR(TIMER1_COMPA_vect)
 {
-	update_pin_status();
 	TimerTick++;
 }
 
 static void clear_pin_memory(unsigned char d)
 {
 	cli();
+	update_pin_status();
 	if (!(PinStatus & d)) PinMemory &= ~d;
 	sei();
 }
