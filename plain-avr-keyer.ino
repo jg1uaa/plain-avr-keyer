@@ -17,14 +17,15 @@
 #define DOT 0x01
 #define DASH 0x02
 
-#define DOT_TICK 7500 // in 10us unit
+#define DOT_LEN 750 // in 100us unit
+#define DOT_TICK ((F_CPU / 1024) * DOT_LEN / 10000)
 #define DASH_TICK (DOT_TICK * 3)
 
 volatile unsigned char PinMemory = 0;
 volatile unsigned char PinStatus = 0;
-volatile unsigned short TimerTick = 0;
+volatile unsigned char TimerExpired = 0;
 
-static void timer_start(void);
+static void timer_start(unsigned short tick);
 static void timer_stop(void);
 
 static void update_pin_status(void)
@@ -51,7 +52,7 @@ ISR(IN_vect)
 
 ISR(TIMER1_COMPA_vect)
 {
-	TimerTick++;
+	TimerExpired = 1;
 }
 
 static void clear_pin_memory(unsigned char d)
@@ -64,10 +65,10 @@ static void clear_pin_memory(unsigned char d)
 
 static void wait_for_tick(unsigned short tick)
 {
-	TimerTick = 0; // timer is stopped here
-	timer_start();
+	TimerExpired = 0; // timer is stopped here
+	timer_start(tick);
 
-	while (TimerTick < tick)
+	while (!TimerExpired)
 		asm __volatile__("sleep");	
 
 	timer_stop();
@@ -106,15 +107,14 @@ static void timer_init(void)
 	TCCR1B = 0;
 	TCCR1A = 0;
 	TCCR1C = 0;
-
-	OCR1A = 160 - 1;	// 10us
 }
 
-static void timer_start(void)
+static void timer_start(unsigned short tick)
 {
+	OCR1A = tick - 1;
 	TCNT1 = 0;
 	TIFR1 = ~0;
-	TCCR1B = 0x09;		// CTC, F_CLK / 1 (1tick = 0.0625us @ 16MHz)
+	TCCR1B = 0x0d;		// CTC, F_CLK / 1024 (1tick = 64us @ 16MHz)
 	TIMSK1 = 0x02;		// Output compare A interrupt enable
 }
 
