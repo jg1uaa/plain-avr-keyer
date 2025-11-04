@@ -18,8 +18,11 @@
 #define DASH 0x02
 
 #define DOT_LEN 750 // in 100us unit
-#define DOT_TICK ((F_CPU / 1024) * DOT_LEN / 10000)
-#define DASH_TICK (DOT_TICK * 3)
+#define BASE_TICK ((F_CPU / 1024) * DOT_LEN / 10000)
+#define DOT_ON_TICK BASE_TICK
+#define DOT_OFF_TICK BASE_TICK
+#define DASH_ON_TICK (BASE_TICK * 3)
+#define DASH_OFF_TICK BASE_TICK
 
 volatile unsigned char PinMemory = 0;
 volatile unsigned char PinStatus = 0;
@@ -134,12 +137,12 @@ static void stop_output(void)
 	OUT_PORT = 0;
 }
 
-static void do_output(unsigned short tick, unsigned char status)
+static void do_output(unsigned short on_tick, unsigned short off_tick, unsigned char status)
 {
 	start_output();
-	wait_for_tick(tick);
+	wait_for_tick(on_tick);
 	stop_output();
-	wait_for_tick(DOT_TICK);
+	wait_for_tick(off_tick);
 	clear_pin_memory(status);
 }
 
@@ -156,7 +159,9 @@ void loop(void)
 	      asm __volatile__("sleep");
 
 	while (PinMemory) {
-		if (PinMemory & DOT) do_output(DOT_TICK, DOT);
-		if (PinMemory & DASH) do_output(DASH_TICK, DASH);
+		if (PinMemory & DOT)
+			do_output(DOT_ON_TICK, DOT_OFF_TICK, DOT);
+		if (PinMemory & DASH)
+			do_output(DASH_ON_TICK, DASH_OFF_TICK, DASH);
 	}
 }
