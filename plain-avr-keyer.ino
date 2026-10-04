@@ -18,7 +18,7 @@
 #define DASH 0x02
 
 #define DOT_LEN 750 // in 100us unit
-#define BASE_TICK ((F_CPU / 1024) * DOT_LEN / 10000)
+#define BASE_TICK ((F_CPU / 1024) * DOT_LEN / 10000UL)
 #define DOT_ON_TICK BASE_TICK
 #define DOT_OFF_TICK BASE_TICK
 #define DASH_ON_TICK (BASE_TICK * 3)
@@ -71,8 +71,18 @@ static void wait_for_tick(unsigned short tick)
 	TimerExpired = 0; // timer is stopped here
 	timer_start(tick);
 
-	while (!TimerExpired)
-		asm __volatile__("sleep");	
+	while (1) {
+		cli();
+		if (TimerExpired) {
+			sei();
+			break;
+		}
+
+		asm __volatile__(
+			"sei	\n"
+			"sleep	\n"
+			);
+	}
 
 	timer_stop();
 }
@@ -155,8 +165,18 @@ void setup(void)
 
 void loop(void)
 {
-	while (!PinStatus)
-	      asm __volatile__("sleep");
+	while (1) {
+		cli();
+		if (PinStatus) {
+			sei();
+			break;
+		}
+
+		asm __volatile__(
+			"sei	\n"
+			"sleep	\n"
+			);
+	}
 
 	while (PinMemory) {
 		if (PinMemory & DOT)
