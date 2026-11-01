@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SPDX-FileCopyrightText: 2025 SASANO Takayoshi <uaa@uaa.org.uk>
+// SPDX-FileCopyrightText: 2025-2026 SASANO Takayoshi <uaa@uaa.org.uk>
 
 #define OUT_0 4 // D4 -> PD4
 #define OUT_PORT PORTD
@@ -14,77 +14,84 @@
 #define IN_ICR 1 // PCIE1 -> PCICR bit 1
 #define IN_vect PCINT1_vect
 
-#define DOT 0x01
-#define DASH 0x02
+#define PIN0_ON 0x01 // dit
+#define PIN1_ON 0x02 // dah
 
-#define DOT_LEN 750 // in 100us unit
-#define BASE_TICK ((F_CPU / 1024) * DOT_LEN / 10000UL)
-#define DOT_ON_TICK BASE_TICK
-#define DOT_OFF_TICK BASE_TICK
-#define DASH_ON_TICK (BASE_TICK * 3)
-#define DASH_OFF_TICK BASE_TICK
+#define DIT_LEN 750 // in 100us unit
+#define BASE_TICK ((F_CPU / 8) / 10000UL)
+#define DIT_ON_TICK DIT_LEN
+#define DIT_OFF_TICK DIT_LEN
+#define DAH_ON_TICK (DIT_LEN * 3)
+#define DAH_OFF_TICK DIT_LEN
 
-volatile unsigned char PinMemory = 0;
-volatile unsigned char PinStatus = 0;
 volatile unsigned char TimerExpired = 0;
+volatile unsigned char CurrPinStatus = 0;
+volatile unsigned char PrevPinStatus = 0;
+#define PinMaskCount 40 // 4ms debounce
+volatile unsigned char PinMaskCounter0 = 0;
+volatile unsigned char PinMaskCounter1 = 0;
+volatile unsigned short PlayerCount = 0;
+volatile unsigned char PinMemory = 0;
 
-static void timer_start(unsigned short tick);
+enum player_status {
+	PlayNothing,
+	PlayDit,
+	PlayDah,
+	StopDit,
+	StopDah,
+};
+volatile enum player_status PlayerStatus = PlayNothing;
+
+static void timer_start(void);
 static void timer_stop(void);
+static void gpio_int_disable(void);
 
 static void update_pin_status(void)
 {
 	unsigned char d = IN_PIN;
 
-	PinStatus = 0;
+	CurrPinStatus = 0;
 
-	if (!(d & (1 << IN_0))) {
-		PinMemory |= DOT;
-		PinStatus |= DOT;
-	}
-
-	if (!(d & (1 << IN_1))) {
-		PinMemory |= DASH;
-		PinStatus |= DASH;
-	}
+	if (!(d & (1 << IN_0))) CurrPinStatus |= PIN0_ON;
+	if (!(d & (1 << IN_1))) CurrPinStatus |= PIN1_ON;
 }
 
 ISR(IN_vect)
 {
+	gpio_int_disable();
+	timer_start();
+
 	update_pin_status();
+
+	PlayerCount = 0;
+	PinMaskCounter0 = 0;
+	PinMaskCounter1 = 0;
+
+	TimerExpired = 1;
 }
 
 ISR(TIMER1_COMPA_vect)
 {
+	update_pin_status();
+
+	if (PlayerCount) PlayerCount--;
+	if (PinMaskCounter0) PinMaskCounter0--;
+	if (PinMaskCounter1) PinMaskCounter1--;
+
 	TimerExpired = 1;
 }
 
-static void clear_pin_memory(unsigned char d)
+static void gpio_int_enable(void)
 {
-	cli();
-	update_pin_status();
-	if (!(PinStatus & d)) PinMemory &= ~d;
-	sei();
+	// no need to clear PCIFR
+	PCICR = 1 << IN_ICR;
+	IN_MSK = (1 << IN_0) | (1 << IN_1);
 }
 
-static void wait_for_tick(unsigned short tick)
+static void gpio_int_disable(void)
 {
-	TimerExpired = 0; // timer is stopped here
-	timer_start(tick);
-
-	while (1) {
-		cli();
-		if (TimerExpired) {
-			sei();
-			break;
-		}
-
-		asm __volatile__(
-			"sei	\n"
-			"sleep	\n"
-			);
-	}
-
-	timer_stop();
+	IN_MSK = 0;
+	PCICR = 0;
 }
 
 static void input_init(void)
@@ -100,9 +107,6 @@ static void input_init(void)
 	PCMSK1 = 0;
 	PCMSK2 = 0;
 	PCIFR = ~0;
-
-	IN_MSK = (1 << IN_0) | (1 << IN_1);
-	PCICR = 1 << IN_ICR;
 }
 
 static void output_init(void)
@@ -116,18 +120,17 @@ static void timer_init(void)
 	TIMSK0 = 0;		// disble Arduino system timer (required)
 	TCCR0B = 0;
 
-	TIMSK1 = 0;
-	TCCR1B = 0;
+	timer_stop();
 	TCCR1A = 0;
 	TCCR1C = 0;
 }
 
-static void timer_start(unsigned short tick)
+static void timer_start(void)
 {
-	OCR1A = tick - 1;
+	OCR1A = BASE_TICK - 1;
 	TCNT1 = 0;
 	TIFR1 = ~0;
-	TCCR1B = 0x0d;		// CTC, F_CLK / 1024 (1tick = 64us @ 16MHz)
+	TCCR1B = 0x0a;		// CTC, F_CLK / 8 (1tick = 0.5us @ 16MHz)
 	TIMSK1 = 0x02;		// Output compare A interrupt enable
 }
 
@@ -137,23 +140,55 @@ static void timer_stop(void)
 	TCCR1B = 0;
 }
 
-static void start_output(void)
+static void start_output(unsigned char status, unsigned short count)
 {
 	OUT_PORT = 1 << OUT_0;
+
+	PlayerStatus = status;
+	PlayerCount = count;
 }
 
-static void stop_output(void)
+static void stop_output(unsigned char status, unsigned short count)
 {
 	OUT_PORT = 0;
+
+	PlayerStatus = status;
+	PlayerCount = count;
 }
 
-static void do_output(unsigned short on_tick, unsigned short off_tick, unsigned char status)
+static void do_play(void)
 {
-	start_output();
-	wait_for_tick(on_tick);
-	stop_output();
-	wait_for_tick(off_tick);
-	clear_pin_memory(status);
+again:
+	switch (PlayerStatus) {
+	case PlayNothing:
+		if (PinMemory & PIN0_ON)
+			start_output(PlayDit, DIT_ON_TICK);
+		else if (PinMemory & PIN1_ON)
+			start_output(PlayDah, DAH_ON_TICK);
+		break;
+	case PlayDit:
+		if (!PlayerCount)
+			stop_output(StopDit, DIT_OFF_TICK);
+		break;
+	case PlayDah:
+		if (!PlayerCount)
+			stop_output(StopDah, DAH_OFF_TICK);
+		break;
+	case StopDit:
+		if (!PlayerCount) {
+			PinMemory &= ~PIN0_ON;
+			PlayerStatus = PlayNothing;
+			goto again;
+		}
+		break;
+	case StopDah:
+		if (!PlayerCount) {
+			PinMemory &= ~PIN1_ON;
+			PlayerStatus = PlayNothing;
+			goto again;
+		}
+		break;
+	}
 }
 
 void setup(void)
@@ -161,16 +196,17 @@ void setup(void)
 	input_init();
 	output_init();
 	timer_init();
+	gpio_int_enable();
 }
 
 void loop(void)
 {
+	unsigned char changed, useprev, status;
+
 	while (1) {
 		cli();
-		if (PinStatus) {
-			sei();
+		if (TimerExpired)
 			break;
-		}
 
 		asm __volatile__(
 			"sei	\n"
@@ -178,10 +214,32 @@ void loop(void)
 			);
 	}
 
-	while (PinMemory) {
-		if (PinMemory & DOT)
-			do_output(DOT_ON_TICK, DOT_OFF_TICK, DOT);
-		if (PinMemory & DASH)
-			do_output(DASH_ON_TICK, DASH_OFF_TICK, DASH);
+	if (PlayerStatus != PlayNothing) do_play();
+
+	changed = (CurrPinStatus ^ PrevPinStatus);
+	useprev = ((PinMaskCounter0 ? PIN0_ON : 0) |
+		   (PinMaskCounter1 ? PIN1_ON : 0));
+
+	PrevPinStatus = status =
+		(PrevPinStatus & useprev) | (CurrPinStatus & ~useprev);
+
+	/* refresh pin memory with debounced paddle status */
+	if (PrevPinStatus & PIN0_ON) PinMemory |= PIN0_ON;
+	if (PrevPinStatus & PIN1_ON) PinMemory |= PIN1_ON;
+
+	/* set debounce counter for newly changed pin */
+	if (changed & ~useprev & PIN0_ON) PinMaskCounter0 = PinMaskCount;
+	if (changed & ~useprev & PIN1_ON) PinMaskCounter1 = PinMaskCount;
+
+	if (PlayerStatus == PlayNothing) {
+		if (PinMemory) {
+			do_play();
+		} else {
+			timer_stop();
+			gpio_int_enable();
+		}
 	}
+
+	TimerExpired = 0;
+	sei();
 }
