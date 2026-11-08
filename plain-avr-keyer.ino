@@ -46,6 +46,11 @@ static void timer_start(void);
 static void timer_stop(void);
 static void gpio_int_disable(void);
 
+extern void led_output(bool state) __attribute__((weak));
+extern void led_init(void) __attribute__((weak));
+extern void sidetone_output(bool state) __attribute__((weak));
+extern void sidetone_init(void) __attribute__((weak));
+
 static void update_pin_status(void)
 {
 	unsigned char d = IN_PIN;
@@ -109,10 +114,10 @@ static void input_init(void)
 	PCIFR = ~0;
 }
 
-static void output_init(void)
+static void gpio_init(void)
 {
-	OUT_PORT = 0;
-	OUT_DDR = 1 << OUT_0;
+	OUT_PORT &= ~(1 << OUT_0);
+	OUT_DDR |= 1 << OUT_0;
 }
 
 static void timer_init(void)
@@ -140,20 +145,22 @@ static void timer_stop(void)
 	TCCR1B = 0;
 }
 
-static void start_output(unsigned char status, unsigned short count)
+static void gpio_output(bool state)
 {
-	OUT_PORT = 1 << OUT_0;
-
-	PlayerStatus = status;
-	PlayerCount = count;
+	if (state) OUT_PORT |= 1 << OUT_0;
+	else OUT_PORT &= ~(1 << OUT_0);
 }
 
-static void stop_output(unsigned char status, unsigned short count)
+static void output(unsigned char status, unsigned short count)
 {
-	OUT_PORT = 0;
-
 	PlayerStatus = status;
 	PlayerCount = count;
+
+	bool state = (status == PlayDit) || (status == PlayDah);
+
+	gpio_output(state);
+	if (led_output) led_output(state);
+	if (sidetone_output) sidetone_output(state);
 }
 
 static void do_play(void)
@@ -162,17 +169,17 @@ again:
 	switch (PlayerStatus) {
 	case PlayNothing:
 		if (PinMemory & PIN0_ON)
-			start_output(PlayDit, DIT_ON_TICK);
+			output(PlayDit, DIT_ON_TICK);
 		else if (PinMemory & PIN1_ON)
-			start_output(PlayDah, DAH_ON_TICK);
+			output(PlayDah, DAH_ON_TICK);
 		break;
 	case PlayDit:
 		if (!PlayerCount)
-			stop_output(StopDit, DIT_OFF_TICK);
+			output(StopDit, DIT_OFF_TICK);
 		break;
 	case PlayDah:
 		if (!PlayerCount)
-			stop_output(StopDah, DAH_OFF_TICK);
+			output(StopDah, DAH_OFF_TICK);
 		break;
 	case StopDit:
 		if (!PlayerCount) {
@@ -194,7 +201,9 @@ again:
 void setup(void)
 {
 	input_init();
-	output_init();
+	gpio_init();
+	if (led_init) led_init();
+	if (sidetone_init) sidetone_init();
 	timer_init();
 	gpio_int_enable();
 }
