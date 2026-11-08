@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SPDX-FileCopyrightText: 2025 SASANO Takayoshi <uaa@uaa.org.uk>
+// SPDX-FileCopyrightText: 2025-2026 SASANO Takayoshi <uaa@uaa.org.uk>
 
 #define OUT_0 4 // D4 -> PD4
 #define OUT_PORT PORTD
@@ -30,6 +30,11 @@ volatile unsigned char TimerExpired = 0;
 
 static void timer_start(unsigned short tick);
 static void timer_stop(void);
+
+extern void led_output(bool state) __attribute__((weak));
+extern void led_init(void) __attribute__((weak));
+extern void sidetone_output(bool state) __attribute__((weak));
+extern void sidetone_init(void) __attribute__((weak));
 
 static void update_pin_status(void)
 {
@@ -105,10 +110,10 @@ static void input_init(void)
 	PCICR = 1 << IN_ICR;
 }
 
-static void output_init(void)
+static void gpio_init(void)
 {
-	OUT_PORT = 0;
-	OUT_DDR = 1 << OUT_0;
+	OUT_PORT &= ~(1 << OUT_0);
+	OUT_DDR |= 1 << OUT_0;
 }
 
 static void timer_init(void)
@@ -137,21 +142,24 @@ static void timer_stop(void)
 	TCCR1B = 0;
 }
 
-static void start_output(void)
+static void gpio_output(bool state)
 {
-	OUT_PORT = 1 << OUT_0;
+	if (state) OUT_PORT |= 1 << OUT_0;
+	else OUT_PORT &= ~(1 << OUT_0);
 }
 
-static void stop_output(void)
+static void output(bool state)
 {
-	OUT_PORT = 0;
+	gpio_output(state);
+	if (led_output) led_output(state);
+	if (sidetone_output) sidetone_output(state);
 }
 
 static void do_output(unsigned short on_tick, unsigned short off_tick, unsigned char status)
 {
-	start_output();
+	output(true);
 	wait_for_tick(on_tick);
-	stop_output();
+	output(false);
 	wait_for_tick(off_tick);
 	clear_pin_memory(status);
 }
@@ -159,7 +167,9 @@ static void do_output(unsigned short on_tick, unsigned short off_tick, unsigned 
 void setup(void)
 {
 	input_init();
-	output_init();
+	gpio_init();
+	if (led_init) led_init();
+	if (sidetone_init) sidetone_init();
 	timer_init();
 }
 
